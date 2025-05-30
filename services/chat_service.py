@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from models.chat import ChatSession, Message, MessageRole, ChatStart, ChatMessage, ChatResponse
 from services.redis_client import redis_client
-from services.teacher_service import TeacherService
+from services.teacher_service import EnhancedTeacherService
 from core.logger import logger
 from datetime import datetime
 import json
@@ -11,7 +11,7 @@ class ChatService:
     def start_chat(user_id: str, chat_data: ChatStart) -> Optional[ChatSession]:
         try:
             # Verify teacher exists
-            teacher = TeacherService.get_teacher(chat_data.teacher_id)
+            teacher = EnhancedTeacherService.get_teacher(chat_data.teacher_id)
             if not teacher:
                 logger.error(f"Teacher not found: {chat_data.teacher_id}")
                 return None
@@ -63,7 +63,7 @@ class ChatService:
                 return None
             
             # Get teacher for this chat
-            teacher = TeacherService.get_teacher(chat_data['teacher_id'])
+            teacher = EnhancedTeacherService.get_teacher(chat_data['teacher_id'])
             if not teacher:
                 logger.error(f"Teacher not found: {chat_data['teacher_id']}")
                 return None
