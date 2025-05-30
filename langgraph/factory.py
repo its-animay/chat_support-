@@ -1,103 +1,54 @@
-from typing import Dict, Any, Optional
-from models.teacher import Teacher
-from langgraph import StateGraph
-from langchain.schema import BaseMessage, HumanMessage, AIMessage
+from typing import Dict, Any, Optional, List
+from models.teacher import EnhancedTeacher
+from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from core.config import settings
+from core.config import Settings
 from core.logger import logger
 
-class TeacherAgentState:
-    def __init__(self):
-        self.messages: list[BaseMessage] = []
-        self.teacher_profile: Optional[Dict[str, Any]] = None
-        self.context: Dict[str, Any] = {}
+settings = Settings()
 
 class LangGraphAgentFactory:
+    """Factory class for creating and running agents with teacher personalities"""
+    
     @staticmethod
-    def build_agent(teacher: Teacher):
-        """Build a LangGraph agent for the given teacher profile"""
+    def generate_response(teacher: EnhancedTeacher, messages: List[Dict[str, str]], context: Dict[str, Any] = None) -> str:
+        """Generate a response using the teacher's personality"""
         try:
-            # Initialize LLM
             llm = ChatOpenAI(
                 api_key=settings.openai_api_key,
                 model="gpt-3.5-turbo",
                 temperature=0.7
             )
             
-            # Create state graph
-            def process_message(state: TeacherAgentState) -> Dict[str, Any]:
-                # Get the last message
-                if not state.messages:
-                    return {"response": "Hello! How can I help you today?"}
-                
-                last_message = state.messages[-1]
-                
-                # Build system prompt with teacher personality
-                system_prompt = f"""
-                {teacher.system_prompt}
-                
-                Remember, you are {teacher.name}, an expert in {teacher.domain}.
-                Your personality is: {teacher.personality}
-                
-                Respond in character, staying true to your expertise and personality.
-                """
-                
-                # Create conversation context
-                conversation = [
-                    {"role": "system", "content": system_prompt}
-                ]
-                
-                # Add recent message history
-                for msg in state.messages[-5:]:  # Last 5 messages for context
-                    if isinstance(msg, HumanMessage):
-                        conversation.append({"role": "user", "content": msg.content})
-                    elif isinstance(msg, AIMessage):
-                        conversation.append({"role": "assistant", "content": msg.content})
-                
-                # Generate response
-                response = llm.invoke([
-                    HumanMessage(content=msg["content"]) 
-                    for msg in conversation
-                ])
-                
-                return {"response": response.content}
+            system_prompt = teacher.generate_system_prompt(context or {})
             
-            # Build the graph
-            workflow = StateGraph(TeacherAgentState)
-            workflow.add_node("process", process_message)
-            workflow.set_entry_point("process")
-            workflow.set_finish_point("process")
+            formatted_messages = [
+                {"role": "system", "content": system_prompt}
+            ]
             
-            return workflow.compile()
+            for msg in messages[-10:]:  
+                role = msg.get('role')
+                content = msg.get('content', '')
+                if role in ['user', 'assistant']:
+                    formatted_messages.append({"role": role, "content": content})
+            
+            # Generate response
+            response = llm.invoke(formatted_messages)
+            
+            return response.content if hasattr(response, 'content') else str(response)
             
         except Exception as e:
-            logger.error(f"Failed to build agent for teacher {teacher.id}: {e}")
-            return None
-    
-    @staticmethod
-    def generate_response(teacher: Teacher, messages: list, context: Dict[str, Any] = None) -> str:
-        """Generate a response using the teacher's agent"""
-        try:
-            agent = LangGraphAgentFactory.build_agent(teacher)
-            if not agent:
-                return "I'm sorry, I'm having trouble right now. Please try again."
+            logger.error(f"Failed to generate response: {e}", exc_info=True)
             
-            # Create state
-            state = TeacherAgentState()
-            state.teacher_profile = teacher.dict()
-            state.context = context or {}
+            # Fallback response that matches the teacher's personality
+            style = teacher.personality.teaching_style.value
+            domain = teacher.specialization.primary_domain
             
-            # Convert messages to LangChain format
-            for msg in messages:
-                if msg.get('role') == 'user':
-                    state.messages.append(HumanMessage(content=msg['content']))
-                elif msg.get('role') == 'assistant':
-                    state.messages.append(AIMessage(content=msg['content']))
-            
-            # Run the agent
-            result = agent.invoke(state)
-            return result.get("response", "I apologize, but I couldn't generate a response.")
-            
-        except Exception as e:
-            logger.error(f"Failed to generate response: {e}")
-            return "I'm experiencing technical difficulties. Please try again."
+            if style == "socratic":
+                return f"I'm having trouble processing your question about {domain} right now. Perhaps we could approach this from a different angle? What specific aspect interests you most?"
+            elif style == "explanatory":
+                return f"I apologize, but I'm experiencing technical difficulties at the moment. In the meantime, could you clarify what you'd like to learn about {domain}?"
+            elif style == "practical":
+                return f"I'm sorry, I'm having a technical issue. While we wait, could you tell me more about what practical {domain} problem you're trying to solve?"
+            else:
+                return f"I apologize for the technical difficulties. I'd still like to help you with your {domain} questions when the system is back online."
