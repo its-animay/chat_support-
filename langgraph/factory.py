@@ -40,7 +40,6 @@ class LangGraphAgentFactory:
         except Exception as e:
             logger.error(f"Failed to generate response: {e}", exc_info=True)
             
-            # Fallback response that matches the teacher's personality
             style = teacher.personality.teaching_style.value
             domain = teacher.specialization.primary_domain
             
