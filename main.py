@@ -12,7 +12,7 @@ settings = Settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting Allyra Chat Service...")
+    logger.info("Starting MTXOLABS Chat Service...")
     
     # Test Redis connection
     if not await redis_client.ping():
@@ -23,10 +23,10 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down Allyra Chat Service...")
+    logger.info("Shutting down MTXOLABS Chat Service...")
 
 app = FastAPI(
-    title="Allyra Chat Service",
+    title="MTXOLABS Chat Service",
     description="Dynamic AI Teacher-Student Platform",
     version="1.0.0",
     lifespan=lifespan
@@ -47,7 +47,7 @@ app.include_router(api_router)
 @app.get("/")
 async def root():
     return {
-        "message": "Allyra Chat Service",
+        "message": "MTXOLABS Chat Service",
         "version": "1.0.0",
         "status": "running"
     }
