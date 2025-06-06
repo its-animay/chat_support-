@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List
 from core.config import Settings
 from core.logger import logger
 
-settings =Settings()
+settings = Settings()
 
 class RedisClient:
     def __init__(self):
@@ -17,10 +17,12 @@ class RedisClient:
             logger.error(f"Redis ping failed: {e}")
             return False
     
-    # JSON operations
+    # JSON operations using core Redis
     def json_set(self, key: str, data: Dict[str, Any]) -> bool:
         try:
-            self.client.json().set(key, "$", data)
+            # Serialize to JSON string and store as regular string
+            json_str = json.dumps(data, default=str)
+            self.client.set(key, json_str)
             return True
         except Exception as e:
             logger.error(f"Redis JSON set failed for key {key}: {e}")
@@ -28,24 +30,31 @@ class RedisClient:
     
     def json_get(self, key: str) -> Optional[Dict[str, Any]]:
         try:
-            result = self.client.json().get(key)
-            return result
+            # Get string and deserialize from JSON
+            json_str = self.client.get(key)
+            if json_str:
+                return json.loads(json_str)
+            return None
         except Exception as e:
             logger.error(f"Redis JSON get failed for key {key}: {e}")
             return None
     
     def json_delete(self, key: str) -> bool:
         try:
-            self.client.json().delete(key)
-            return True
+            # Use regular delete for JSON keys
+            result = self.client.delete(key)
+            return bool(result)
         except Exception as e:
             logger.error(f"Redis JSON delete failed for key {key}: {e}")
             return False
     
-    # Stream operations
+    # Stream operations (these work with core Redis)
     def stream_add(self, stream_key: str, data: Dict[str, Any]) -> Optional[str]:
         try:
-            message_id = self.client.xadd(stream_key, data)
+            # Convert dict values to strings for stream storage
+            string_data = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) 
+                          for k, v in data.items()}
+            message_id = self.client.xadd(stream_key, string_data)
             return message_id
         except Exception as e:
             logger.error(f"Redis stream add failed for {stream_key}: {e}")
@@ -55,20 +64,28 @@ class RedisClient:
         try:
             messages = self.client.xread({stream_key: "0"}, count=count)
             if messages:
-                return [
-                    {
-                        "id": msg_id,
-                        "data": msg_data
-                    }
-                    for stream, msgs in messages
-                    for msg_id, msg_data in msgs
-                ]
+                result = []
+                for stream, msgs in messages:
+                    for msg_id, msg_data in msgs:
+                        # Try to deserialize JSON values back
+                        processed_data = {}
+                        for k, v in msg_data.items():
+                            try:
+                                processed_data[k] = json.loads(v)
+                            except (json.JSONDecodeError, TypeError):
+                                processed_data[k] = v
+                        
+                        result.append({
+                            "id": msg_id,
+                            "data": processed_data
+                        })
+                return result
             return []
         except Exception as e:
             logger.error(f"Redis stream read failed for {stream_key}: {e}")
             return []
     
-    # List operations
+    # List operations (work with core Redis)
     def list_push(self, key: str, value: str) -> bool:
         try:
             self.client.lpush(key, value)
@@ -84,7 +101,7 @@ class RedisClient:
             logger.error(f"Redis list get failed for key {key}: {e}")
             return []
     
-    # Key operations
+    # Key operations (work with core Redis)
     def exists(self, key: str) -> bool:
         try:
             return bool(self.client.exists(key))
@@ -94,8 +111,8 @@ class RedisClient:
     
     def delete(self, key: str) -> bool:
         try:
-            self.client.delete(key)
-            return True
+            result = self.client.delete(key)
+            return bool(result)
         except Exception as e:
             logger.error(f"Redis delete failed for key {key}: {e}")
             return False
