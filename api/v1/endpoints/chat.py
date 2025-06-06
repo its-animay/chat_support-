@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query, Path, Body
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from models.chat import ChatSession, Message, ChatStart, ChatMessage, ChatResponse
 from services.chat_service import ChatService
 from core.logger import logger
@@ -10,6 +10,11 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # Additional models for new endpoints
 class MessageRating(BaseModel):
     rating: float = Field(..., ge=1, le=5, description="Rating from 1-5")
+
+class MessageSourcesResponse(BaseModel):
+    message_id: str
+    rag_enhanced: bool
+    sources: List[Dict[str, Any]] = []
 
 # Simple user ID extraction (in production, use proper auth)
 async def get_current_user(x_user_id: str = Header(...)):
@@ -29,14 +34,15 @@ async def start_chat(
         )
     return chat
 
+
 @router.post("/{chat_id}/send", response_model=ChatResponse)
 async def send_message(
     chat_id: str = Path(..., description="The ID of the chat session"),
     message: ChatMessage = Body(..., description="The message to send"),
     user_id: str = Depends(get_current_user)
 ):
-    """Send a message in a chat session and get AI teacher response"""
-    response = ChatService.send_message(chat_id, user_id, message)
+    """Send a message in a chat session and get AI teacher response with optional RAG enhancement"""
+    response = await ChatService.send_message(chat_id, user_id, message)
     if not response:
         raise HTTPException(
             status_code=400, 
@@ -91,3 +97,19 @@ async def end_chat(
             detail="Failed to end chat session"
         )
     return {"message": "Chat session ended successfully"}
+
+
+@router.get("/{chat_id}/message/{message_id}/sources", response_model=MessageSourcesResponse)
+async def get_message_sources(
+    chat_id: str = Path(..., description="The ID of the chat session"),
+    message_id: str = Path(..., description="The ID of the message"),
+    user_id: str = Depends(get_current_user)
+):
+    """Get the sources used for a RAG-enhanced message"""
+    sources = ChatService.get_message_sources(chat_id, message_id, user_id)
+    if not sources:
+        raise HTTPException(
+            status_code=404, 
+            detail="Message not found or not RAG-enhanced"
+        )
+    return sources

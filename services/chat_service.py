@@ -8,10 +8,17 @@ from utils.helpers import serialize_datetime, deserialize_datetime
 from datetime import datetime
 import json
 from langgraph.factory import LangGraphAgentFactory
+from services.rag_service import RagService
 
 class ChatService:
+
+    def __init__(self):
+        self.rag_service = RagService()
+
     @staticmethod
     def start_chat(user_id: str, chat_data: ChatStart) -> Optional[ChatSession]:
+        """Start a new chat session (same as original)"""
+        # Original implementation remains unchanged
         try:
             # Verify teacher exists - use EnhancedTeacherService
             teacher = EnhancedTeacherService.get_teacher(chat_data.teacher_id)
@@ -65,8 +72,8 @@ class ChatService:
             logger.error(f"Failed to start chat: {e}", exc_info=True)
             return None
     
-    @staticmethod
-    def send_message(chat_id: str, user_id: str, message_data: ChatMessage) -> Optional[ChatResponse]:
+    async def send_message(chat_id: str, user_id: str, message_data: ChatMessage) -> Optional[ChatResponse]:
+        """Send a message in a chat session and get AI teacher response"""
         try:
             # Verify chat exists and belongs to user
             chat_key = f"chat:{chat_id}"
@@ -281,3 +288,46 @@ class ChatService:
             "metadata": json.dumps(message.metadata)
         }
         redis_client.stream_add(stream_key, message_data)
+ 
+    @staticmethod
+    def get_message_sources(chat_id: str, message_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get sources used for a specific RAG-enhanced message"""
+        try:
+            # Verify chat exists and belongs to user
+            chat_key = f"chat:{chat_id}"
+            chat_data = redis_client.json_get(chat_key)
+            
+            if not chat_data or chat_data.get('user_id') != user_id:
+                logger.error(f"Chat not found or unauthorized: {chat_id}")
+                return None
+            
+            # Get chat history
+            stream_key = f"chat:{chat_id}:messages"
+            stream_messages = redis_client.stream_read(stream_key)
+            
+            # Find the specific message
+            for stream_msg in stream_messages:
+                msg_data = stream_msg['data']
+                if msg_data.get('id') == message_id:
+                    # Parse metadata
+                    metadata = msg_data.get('metadata', '{}')
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except json.JSONDecodeError:
+                            metadata = {}
+                    
+                    # Extract sources
+                    sources = metadata.get('sources_used', [])
+                    rag_enhanced = metadata.get('rag_enhanced', False)
+                    
+                    return {
+                        "message_id": message_id,
+                        "rag_enhanced": rag_enhanced,
+                        "sources": sources
+                    }
+            
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get message sources: {e}", exc_info=True)
+            return None
