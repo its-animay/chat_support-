@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "your-secret-key"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    redis_fallback_enabled: bool = False
+    redis_fallback_dir: str = "./fallback_storage"
+    redis_max_concurrent_ops: int = 100
     milvus: MilvusConfig = Field(default_factory=MilvusConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     rag: RagConfig = Field(default_factory=RagConfig)

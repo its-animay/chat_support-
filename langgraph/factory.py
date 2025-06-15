@@ -1,9 +1,11 @@
+# factory.py - Updated version
 from typing import Dict, Any, Optional, List
 from models.teacher import EnhancedTeacher
 from langchain.schema import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from core.config import Settings
 from core.logger import logger
+import asyncio
 
 settings = Settings()
 
@@ -11,8 +13,8 @@ class LangGraphAgentFactory:
     """Factory class for creating and running agents with teacher personalities"""
     
     @staticmethod
-    def generate_response(teacher: EnhancedTeacher, messages: List[Dict[str, str]], context: Dict[str, Any] = None) -> str:
-        """Generate a response using the teacher's personality"""
+    async def generate_response(teacher: EnhancedTeacher, messages: List[Dict[str, str]], context: Dict[str, Any] = None) -> str:
+        """Generate a response using the teacher's personality asynchronously"""
         try:
             llm = ChatOpenAI(
                 api_key=settings.openai_api_key,
@@ -32,8 +34,7 @@ class LangGraphAgentFactory:
                 if role in ['user', 'assistant']:
                     formatted_messages.append({"role": role, "content": content})
             
-            # Generate response
-            response = llm.invoke(formatted_messages)
+            response = await llm.ainvoke(formatted_messages)  
             
             return response.content if hasattr(response, 'content') else str(response)
             

@@ -40,7 +40,7 @@ class TeacherStylesResponse(BaseModel):
 @router.post("/", response_model=EnhancedTeacher)
 async def create_teacher(teacher_data: EnhancedTeacherCreate):
     """Create a new enhanced AI teacher with rich personality"""
-    teacher = EnhancedTeacherService.create_teacher(teacher_data)
+    teacher = await EnhancedTeacherService.create_teacher(teacher_data)
     if not teacher:
         raise HTTPException(
             status_code=500, 
@@ -51,7 +51,7 @@ async def create_teacher(teacher_data: EnhancedTeacherCreate):
 @router.get("/{teacher_id}", response_model=EnhancedTeacher)
 async def get_teacher(teacher_id: str = Path(..., description="The ID of the enhanced teacher to retrieve")):
     """Get a specific enhanced teacher by ID"""
-    teacher = EnhancedTeacherService.get_teacher(teacher_id)
+    teacher = await EnhancedTeacherService.get_teacher(teacher_id)
     if not teacher:
         raise HTTPException(
             status_code=404, 
@@ -65,7 +65,7 @@ async def update_teacher(
     update_data: EnhancedTeacherUpdate = Body(..., description="The data to update")
 ):
     """Update an enhanced teacher's configuration"""
-    teacher = EnhancedTeacherService.update_teacher(teacher_id, update_data)
+    teacher = await EnhancedTeacherService.update_teacher(teacher_id, update_data)
     if not teacher:
         raise HTTPException(
             status_code=404, 
@@ -76,7 +76,7 @@ async def update_teacher(
 @router.delete("/{teacher_id}")
 async def delete_teacher(teacher_id: str = Path(..., description="The ID of the enhanced teacher to delete")):
     """Delete an enhanced teacher and all associated data"""
-    success = EnhancedTeacherService.delete_teacher(teacher_id)
+    success = await EnhancedTeacherService.delete_teacher(teacher_id)
     if not success:
         raise HTTPException(
             status_code=404, 
@@ -87,7 +87,7 @@ async def delete_teacher(teacher_id: str = Path(..., description="The ID of the 
 @router.get("/", response_model=List[EnhancedTeacher])
 async def list_teachers():
     """List all available enhanced teachers"""
-    return EnhancedTeacherService.list_teachers()
+    return await EnhancedTeacherService.list_teachers()
 
 # Enhanced endpoints
 @router.get("/search", response_model=TeacherSearchResponse)
@@ -101,7 +101,7 @@ async def search_teachers(
     limit: int = Query(20, ge=1, le=100, description="Items per page")
 ):
     """Search enhanced teachers with rich filtering options"""
-    return EnhancedTeacherService.search_teachers(
+    return await EnhancedTeacherService.search_teachers(
         domain=domain,
         teaching_style=teaching_style,
         difficulty_level=difficulty_level,
@@ -114,7 +114,7 @@ async def search_teachers(
 @router.get("/domain/{domain}", response_model=EnhancedTeacher)
 async def get_teacher_by_domain(domain: str = Path(..., description="The domain to search for")):
     """Get an enhanced teacher by its domain expertise"""
-    teacher = EnhancedTeacherService.get_teacher_by_domain(domain)
+    teacher = await EnhancedTeacherService.get_teacher_by_domain(domain)
     if not teacher:
         raise HTTPException(
             status_code=404, 
@@ -128,7 +128,7 @@ async def add_teacher_rating(
     rating_data: TeacherRatingRequest = Body(..., description="Rating data")
 ):
     """Add a rating for an enhanced teacher"""
-    success = EnhancedTeacherService.add_teacher_rating(teacher_id, rating_data.rating)
+    success = await EnhancedTeacherService.add_teacher_rating(teacher_id, rating_data.rating)
     if not success:
         raise HTTPException(
             status_code=404, 
@@ -141,7 +141,7 @@ async def increment_session(
     teacher_id: str = Path(..., description="The ID of the enhanced teacher")
 ):
     """Increment the session count for an enhanced teacher"""
-    success = EnhancedTeacherService.increment_session_count(teacher_id)
+    success = await EnhancedTeacherService.increment_session_count(teacher_id)
     if not success:
         raise HTTPException(
             status_code=404, 
@@ -155,14 +155,14 @@ async def generate_system_prompt(
     prompt_data: TeacherPromptRequest = Body(TeacherPromptRequest(), description="Context for prompt generation")
 ):
     """Generate a context-aware system prompt for an enhanced teacher"""
-    teacher = EnhancedTeacherService.get_teacher(teacher_id)
+    teacher = await EnhancedTeacherService.get_teacher(teacher_id)
     if not teacher:
         raise HTTPException(
             status_code=404, 
             detail=f"Enhanced teacher with ID {teacher_id} not found"
         )
     
-    system_prompt = EnhancedTeacherService.generate_system_prompt(teacher_id, prompt_data.context)
+    system_prompt = await EnhancedTeacherService.generate_system_prompt(teacher_id, prompt_data.context)
     if not system_prompt:
         raise HTTPException(
             status_code=500, 
