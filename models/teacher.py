@@ -203,6 +203,12 @@ class StudentAdaptation(BaseModel):
 class EnhancedTeacherCreate(BaseModel):
     """Model for creating a new enhanced teacher"""
     
+    # Custom ID field (optional)
+    id: Optional[str] = Field(
+        None,
+        description="Custom teacher ID (if not provided, a UUID will be generated)"
+    )
+    
     # Basic information
     name: str = Field(..., min_length=1, max_length=100)
     title: Optional[str] = Field(
@@ -239,6 +245,13 @@ class EnhancedTeacherCreate(BaseModel):
         for placeholder in required_placeholders:
             if placeholder not in v:
                 raise ValueError(f"System prompt must contain {placeholder}")
+        return v
+    
+    @validator('id')
+    def validate_id(cls, v):
+        """Validate custom ID if provided"""
+        if v is not None and not v.strip():
+            raise ValueError("ID cannot be empty string if provided")
         return v
 
 class EnhancedTeacherUpdate(BaseModel):
@@ -286,6 +299,7 @@ class EnhancedTeacherUpdate(BaseModel):
 class EnhancedTeacher(BaseModel):
     """Enhanced teacher model with rich personality system"""
     
+    # Modified to use provided ID or generate one
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     
     # Basic information
@@ -383,10 +397,11 @@ class EnhancedTeacher(BaseModel):
         
         return vector
 
-# Factory functions to create example teachers
-def create_math_professor():
-    """Create a formal mathematics professor"""
+# Factory functions to create example teachers with custom IDs
+def create_math_professor(custom_id: str = None):
+    """Create a formal mathematics professor with optional custom ID"""
     return EnhancedTeacher(
+        id=custom_id or str(uuid.uuid4()),
         name="Dr. Elizabeth Chen",
         title="Professor",
         personality=TeacherPersonality(
@@ -437,9 +452,10 @@ def create_math_professor():
         """
     )
 
-def create_coding_mentor():
-    """Create a casual coding mentor"""
+def create_coding_mentor(custom_id: str = None):
+    """Create a casual coding mentor with optional custom ID"""
     return EnhancedTeacher(
+        id=custom_id or str(uuid.uuid4()),
         name="Alex Rivera",
         title=None,
         personality=TeacherPersonality(

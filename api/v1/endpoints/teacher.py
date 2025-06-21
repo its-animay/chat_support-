@@ -39,9 +39,18 @@ class TeacherStylesResponse(BaseModel):
 # Standard CRUD endpoints
 @router.post("/", response_model=EnhancedTeacher)
 async def create_teacher(teacher_data: EnhancedTeacherCreate):
-    """Create a new enhanced AI teacher with rich personality"""
+    """Create a new enhanced AI teacher with rich personality and optional custom ID"""
     teacher = await EnhancedTeacherService.create_teacher(teacher_data)
     if not teacher:
+        # Check if it's a duplicate ID issue
+        if teacher_data.id:
+            existing_teacher = await EnhancedTeacherService.get_teacher(teacher_data.id)
+            if existing_teacher:
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"A teacher with ID '{teacher_data.id}' already exists. Please use a different ID."
+                )
+        
         raise HTTPException(
             status_code=500, 
             detail="Failed to create enhanced teacher. Please check the logs or contact support."
@@ -178,7 +187,7 @@ async def generate_system_prompt(
 @router.post("/create-defaults", response_model=Dict[str, Any])
 async def create_default_teachers():
     """Create default enhanced teacher profiles if none exist"""
-    return EnhancedTeacherService.create_default_teachers()
+    return await EnhancedTeacherService.create_default_teachers()
 
 @router.get("/styles/all", response_model=TeacherStylesResponse)
 async def get_all_styles():

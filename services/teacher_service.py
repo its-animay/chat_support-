@@ -14,6 +14,7 @@ from core.logger import logger
 from utils.helpers import serialize_datetime, deserialize_datetime, safe_json_dumps, safe_json_loads, generate_id
 import json
 from datetime import datetime
+import uuid
 
 class EnhancedTeacherService:
     
@@ -43,12 +44,18 @@ class EnhancedTeacherService:
     
     @staticmethod
     async def create_teacher(teacher_data: EnhancedTeacherCreate) -> Optional[EnhancedTeacher]:
-        """Create a new teacher with async support"""
+        """Create a new teacher with async support and custom ID support"""
         try:
-            # Create new teacher instance
+            # Create new teacher instance with custom ID if provided
+            teacher_dict = teacher_data.dict(exclude={'created_by'})
+            
+            # If custom ID is provided, use it, otherwise generate UUID
+            teacher_id = teacher_dict.pop('id') if teacher_dict.get('id') else str(uuid.uuid4())
+            
             teacher = EnhancedTeacher(
+                id=teacher_id,
                 created_by=teacher_data.created_by,
-                **teacher_data.dict(exclude={'created_by'})
+                **teacher_dict
             )
             
             # Serialize and save to Redis
@@ -56,6 +63,12 @@ class EnhancedTeacherService:
             teacher_dict = teacher.dict()
             teacher_dict['created_at'] = serialize_datetime(teacher.created_at)
             teacher_dict['updated_at'] = serialize_datetime(teacher.updated_at)
+            
+            # Check if teacher with this ID already exists
+            existing_teacher = await redis_client.json_get(teacher_key)
+            if existing_teacher:
+                logger.error(f"Teacher with ID {teacher.id} already exists")
+                return None
             
             success = await redis_client.json_set(teacher_key, teacher_dict)
             
@@ -365,7 +378,7 @@ class EnhancedTeacherService:
     
     @staticmethod
     async def create_default_teachers() -> Dict[str, Any]:
-        """Create default teacher profiles with async support"""
+        """Create default teacher profiles with async support and custom IDs"""
         try:
             # Check if teachers already exist
             existing_teachers = await EnhancedTeacherService.list_teachers()
@@ -376,16 +389,22 @@ class EnhancedTeacherService:
                     "created": 0
                 }
             
-            # Create math professor
-            math_prof = create_math_professor()
+            # Create math professor with custom ID
+            math_prof = create_math_professor("math_professor_001")
             await EnhancedTeacherService.create_teacher(
-                EnhancedTeacherCreate(**math_prof.dict(exclude={'id', 'created_at', 'updated_at', 'total_sessions', 'average_rating'}))
+                EnhancedTeacherCreate(
+                    id=math_prof.id,
+                    **math_prof.dict(exclude={'id', 'created_at', 'updated_at', 'total_sessions', 'average_rating'})
+                )
             )
             
-            # Create coding mentor
-            coding_mentor = create_coding_mentor()
+            # Create coding mentor with custom ID
+            coding_mentor = create_coding_mentor("coding_mentor_001")
             await EnhancedTeacherService.create_teacher(
-                EnhancedTeacherCreate(**coding_mentor.dict(exclude={'id', 'created_at', 'updated_at', 'total_sessions', 'average_rating'}))
+                EnhancedTeacherCreate(
+                    id=coding_mentor.id,
+                    **coding_mentor.dict(exclude={'id', 'created_at', 'updated_at', 'total_sessions', 'average_rating'})
+                )
             )
             
             return {
