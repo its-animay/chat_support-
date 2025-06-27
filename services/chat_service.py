@@ -172,7 +172,9 @@ class ChatService:
                 "difficulty_level": {
                     "min": teacher.specialization.min_difficulty.value,
                     "max": teacher.specialization.max_difficulty.value
-                }
+                },
+                # Enable RAG if requested in message metadata
+                "use_rag": message_data.metadata.get("use_rag", False)
             }
             
             # LLM response generation is CPU-intensive but doesn't require Redis access
@@ -183,6 +185,9 @@ class ChatService:
             )
             
             if ai_response:
+                # Determine if RAG was used
+                rag_enhanced = message_data.metadata.get("use_rag", False)
+                
                 # Create AI message
                 ai_message = Message(
                     role=MessageRole.ASSISTANT,
@@ -191,7 +196,8 @@ class ChatService:
                         "teacher_id": teacher.id,
                         "teacher_name": teacher.name,
                         "domain": teacher.specialization.primary_domain,
-                        "teaching_style": teacher.personality.teaching_style.value
+                        "teaching_style": teacher.personality.teaching_style.value,
+                        "rag_enhanced": rag_enhanced
                     }
                 )
                 

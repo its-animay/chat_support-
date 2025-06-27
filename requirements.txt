@@ -39,3 +39,18 @@ pytest>=7.3.1
 black>=23.3.0
 isort>=5.12.0
 mypy>=1.3.0
+
+sentence-transformers>=2.2.2
+transformers>=4.33.2
+torch>=2.0.1
+tenacity>=8.2.3
+typing-extensions>=4.7.1
+httpx>=0.24.1
+prometheus-fastapi-instrumentator>=6.1.0
+
+# File Processing
+PyPDF2>=3.0.1  # PDF processing
+mammoth>=1.6.0  # DOCX processing
+pandas>=2.0.3  # CSV and Excel processing
+openpyxl>=3.1.2  # Excel processing
+tabulate>=0.9.0  # For markdown tables

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, Query, Path, Body, BackgroundTasks
 from typing import List, Optional, Dict, Any
-from models.chat import ChatSession, Message, ChatStart, ChatMessage, ChatResponse
+from models.chat import ChatSession, Message, ChatStart, ChatMessage, ChatResponse, MessageRole
 from services.chat_service import ChatService
 from core.logger import logger
 from pydantic import BaseModel, Field
@@ -135,3 +135,63 @@ async def cleanup_old_chats(
     else:
         deleted = await ChatService.clean_expired_chats(None, days_threshold)
         return {"message": f"Cleanup completed", "chats_deleted": deleted}
+    
+class RagEnableRequest(BaseModel):
+    """Request to enable RAG for a chat message"""
+    enable_rag: bool = Field(True, description="Whether to enable RAG")
+
+@router.post("/{chat_id}/message/{message_id}/enable-rag", response_model=dict)
+async def enable_rag_for_message(
+    chat_id: str = Path(..., description="The ID of the chat session"),
+    message_id: str = Path(..., description="The ID of the message to regenerate with RAG"),
+    rag_data: RagEnableRequest = Body(..., description="RAG enable request"),
+    user_id: str = Depends(get_current_user)
+):
+    """Enable Retrieval-Augmented Generation for a specific message"""
+    # Get chat history
+    messages = await ChatService.get_chat_history(chat_id, user_id)
+    
+    # Find the target message
+    target_message = None
+    for message in messages:
+        if message.id == message_id:
+            target_message = message
+            break
+    
+    if not target_message:
+        raise HTTPException(
+            status_code=404,
+            detail="Message not found"
+        )
+    
+    # Ensure it's a user message
+    if target_message.role != MessageRole.USER:
+        raise HTTPException(
+            status_code=400,
+            detail="RAG can only be enabled for user messages"
+        )
+    
+    # Create new message with RAG enabled
+    chat_message = ChatMessage(
+        content=target_message.content,
+        metadata={
+            "use_rag": rag_data.enable_rag,
+            "original_message_id": message_id
+        }
+    )
+    
+    # Send the message to get a RAG-enhanced response
+    response = await ChatService.send_message(chat_id, user_id, chat_message)
+    
+    if not response:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate RAG-enhanced response"
+        )
+    
+    return {
+        "message": "RAG-enhanced response generated successfully",
+        "original_message_id": message_id,
+        "new_message_id": response.message_id,
+        "rag_enabled": rag_data.enable_rag
+    }

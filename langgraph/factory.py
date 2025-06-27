@@ -24,6 +24,42 @@ class LangGraphAgentFactory:
             
             system_prompt = teacher.generate_system_prompt(context or {})
             
+            # Check if RAG enhancement is requested
+            use_rag = context.get('use_rag', False) if context else False
+            
+            # Get the latest user message
+            latest_user_message = None
+            for msg in reversed(messages):
+                if msg.get('role') == 'user':
+                    latest_user_message = msg.get('content', '')
+                    break
+            
+            # If RAG is enabled and we have a user message, enhance with RAG
+            rag_context = ""
+            if use_rag and latest_user_message:
+                from services.rag_pipeline import rag_pipeline
+                
+                # Get RAG results from teacher's knowledge base
+                rag_result = await rag_pipeline.process_query(
+                    query=latest_user_message,
+                    top_k=5,
+                    top_n=3,
+                    temperature=0.0,  # Just get context, not response
+                    teacher_id=teacher.id  # Use teacher-specific knowledge base
+                )
+                
+                # Extract context from retrieved documents
+                if rag_result.get("sources_used"):
+                    rag_context = "\n\nRelevant information from my knowledge base:\n"
+                    for i, source in enumerate(rag_result.get("sources_used", [])):
+                        # Include source title if available
+                        title = source.get("metadata", {}).get("title", f"Source {i+1}")
+                        rag_context += f"\n---\n{title}:\n{source.get('content', '')}\n---\n"
+            
+            # Append RAG context to system prompt if available
+            if rag_context:
+                system_prompt += rag_context
+            
             formatted_messages = [
                 {"role": "system", "content": system_prompt}
             ]

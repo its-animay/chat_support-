@@ -519,6 +519,15 @@ class RedisClient:
             health["error"] = str(e)
             
         return health
+    
+    async def set_expiration(self, key: str, seconds: int) -> bool:
+        """Set expiration time on a key"""
+        try:
+            result = await asyncio.to_thread(self.client.expire, key, seconds)
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Failed to set expiration for key {key}: {e}")
+            return False
 
 # Initialize a single Redis client instance
 redis_client = RedisClient()
