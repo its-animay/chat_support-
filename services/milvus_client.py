@@ -534,26 +534,24 @@ class MilvusClientService:
             return 0
         
         try:
-            # Build expression to count documents for this teacher
+            # FIXED: Use query approach instead of problematic count syntax
             expr = f"teacher_id == '{teacher_id}'"
             
-            # Execute query to get count
-            count = await asyncio.to_thread(
+            # Query for documents matching the teacher_id
+            results = await asyncio.to_thread(
                 collection.query,
                 expr=expr,
-                output_fields=["count(*)"],
-                limit=1
+                output_fields=["id"],  # Only need IDs for counting
+                limit=16384  # Set reasonable limit for large collections
             )
             
-            # Parse count result
-            if count and len(count) > 0:
-                return count[0].get("count(*)", 0)
-            return 0
+            # Return the count of results
+            return len(results)
             
         except Exception as e:
             logger.error(f"Failed to get document count for teacher {teacher_id}: {e}", exc_info=True)
             return 0
-    
+        
     async def list_teachers(self) -> List[str]:
         """
         List all teacher IDs that have documents in the collection
@@ -601,18 +599,32 @@ class MilvusClientService:
         if not await self.connect():
             return {}
         
-        # Get all teacher IDs
-        teacher_ids = await self.list_teachers()
-        if not teacher_ids:
+        # Get collection
+        collection = await self._get_collection()
+        if not collection:
             return {}
         
-        # Get counts for each teacher
-        result = {}
-        for teacher_id in teacher_ids:
-            count = await self.get_teacher_document_count(teacher_id)
-            result[teacher_id] = count
-        
-        return result
+        try:
+            # Get all documents with teacher_id field
+            results = await asyncio.to_thread(
+                collection.query,
+                expr="teacher_id != ''",  # Get all documents with teacher_id
+                output_fields=["teacher_id"],
+                limit=16384  # Reasonable limit
+            )
+            
+            # Count documents per teacher
+            teacher_counts = {}
+            for result in results:
+                teacher_id = result.get("teacher_id")
+                if teacher_id:
+                    teacher_counts[teacher_id] = teacher_counts.get(teacher_id, 0) + 1
+            
+            return teacher_counts
+            
+        except Exception as e:
+            logger.error(f"Failed to get teacher stats: {e}", exc_info=True)
+            return {}
     
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -637,12 +649,21 @@ class MilvusClientService:
                 health["collection_exists"] = collection is not None
                 
                 if health["collection_exists"]:
-                    # Get document count
-                    count = await asyncio.to_thread(collection.num_entities)
-                    health["document_count"] = count
+                    # FIXED: Remove asyncio.to_thread wrapper for property access
+                    try:
+                        count = collection.num_entities  # This is a property, not a method
+                        health["document_count"] = count
+                    except Exception as e:
+                        logger.error(f"Error getting document count: {e}")
+                        health["document_count"] = 0
+                        health["error"] = str(e)
                     
                     # Get teacher stats
-                    health["teacher_stats"] = await self.get_teacher_stats()
+                    try:
+                        health["teacher_stats"] = await self.get_teacher_stats()
+                    except Exception as e:
+                        logger.error(f"Error getting teacher stats: {e}")
+                        health["teacher_stats"] = {}
             
             return health
             

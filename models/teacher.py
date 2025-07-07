@@ -150,6 +150,10 @@ class TeacherSpecialization(BaseModel):
         default=False,
         description="Can design learning paths"
     )
+    enable_rag: bool = Field(
+        default=False,
+        description="Whether to use RAG for this teacher's responses"
+    )
     
     # Knowledge base
     knowledge_cutoff: Optional[datetime] = Field(

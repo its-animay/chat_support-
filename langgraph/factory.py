@@ -24,8 +24,12 @@ class LangGraphAgentFactory:
             
             system_prompt = teacher.generate_system_prompt(context or {})
             
-            # Check if RAG enhancement is requested
-            use_rag = context.get('use_rag', False) if context else False
+            # Check if RAG is enabled for this teacher
+            use_rag = teacher.specialization.enable_rag
+            
+            # Override with message-specific setting if present
+            if context and 'use_rag' in context:
+                use_rag = context.get('use_rag')
             
             # Get the latest user message
             latest_user_message = None
@@ -59,6 +63,7 @@ class LangGraphAgentFactory:
             # Append RAG context to system prompt if available
             if rag_context:
                 system_prompt += rag_context
+            
             
             formatted_messages = [
                 {"role": "system", "content": system_prompt}
