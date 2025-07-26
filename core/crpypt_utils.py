@@ -1,7 +1,7 @@
 from cryptography.fernet import Fernet
 
 # Use a pre-generated key and share it across all services securely
-SHARED_SECRET_KEY = b'my_super_secure_key_here___must_be_32_byte_base64'
+SHARED_SECRET_KEY = b'5IyViD8_gZ3Mrq2pw3sZvXB6_6pUMfvMco34cjk3kBQ='
 
 fernet = Fernet(SHARED_SECRET_KEY)
 
