@@ -3,6 +3,7 @@ from models.chat import ChatSession, Message, MessageRole, ChatStart, ChatMessag
 from models.teacher import EnhancedTeacher
 from services.redis_client import redis_client
 from services.teacher_service import EnhancedTeacherService
+from services.chat_rag_integration import ChatRAGIntegration
 from core.logger import logger
 from utils.helpers import serialize_datetime, deserialize_datetime
 from datetime import datetime
@@ -147,18 +148,11 @@ class ChatService:
                     return None
                 
                 chat_history = await history_future
-                
-                # Format chat history for LLM
-                formatted_messages = []
-                for msg in chat_history:
-                    if msg.role != MessageRole.SYSTEM:  # Skip system messages
-                        formatted_messages.append({
-                            "role": msg.role.value,
-                            "content": msg.content
-                        })
             
-            # Generate AI response using teacher personality
-            # This can be CPU intensive, so we do it outside the Redis semaphore
+            # Determine if RAG should be used
+            use_rag = await ChatRAGIntegration.should_use_rag(message_data.dict(), teacher)
+            
+            # Context for response generation
             context = {
                 "chat_id": chat_id,
                 "teaching_style": teacher.personality.teaching_style.value,
@@ -173,22 +167,49 @@ class ChatService:
                     "min": teacher.specialization.min_difficulty.value,
                     "max": teacher.specialization.max_difficulty.value
                 },
-                # Enable RAG if requested in message metadata
-                "use_rag": message_data.metadata.get("use_rag", False)
+                "use_rag": use_rag
             }
             
-            # LLM response generation is CPU-intensive but doesn't require Redis access
-            ai_response = await LangGraphAgentFactory.generate_response(
-                teacher=teacher,
-                messages=formatted_messages,
-                context=context
-            )
+            ai_response = None
+            sources_used = []
+            rag_enhanced = False
+            
+            # Generate response based on RAG setting
+            if use_rag:
+                # Use RAG pipeline for enhanced response
+                rag_result = await ChatRAGIntegration.enhance_response_with_rag(
+                    user_message=message_data.content,
+                    chat_history=chat_history,
+                    teacher_id=teacher.id,
+                    context=context
+                )
+                
+                ai_response = rag_result.get("content")
+                sources_used = rag_result.get("sources_used", [])
+                rag_enhanced = rag_result.get("rag_enhanced", False)
+                processing_time = rag_result.get("processing_time", 0)
+                
+                logger.info(f"RAG response generated in {processing_time:.2f}s with {len(sources_used)} sources")
+            else:
+                # Use standard LLM response
+                formatted_messages = []
+                for msg in chat_history:
+                    if msg.role != MessageRole.SYSTEM:  # Skip system messages
+                        formatted_messages.append({
+                            "role": msg.role.value,
+                            "content": msg.content
+                        })
+                
+                ai_response = await LangGraphAgentFactory.generate_response(
+                    teacher=teacher,
+                    messages=formatted_messages,
+                    context=context
+                )
+                
+                logger.info(f"Standard response generated for chat {chat_id}")
             
             if ai_response:
-                # Determine if RAG was used
-                rag_enhanced = message_data.metadata.get("use_rag", False)
-                
-                # Create AI message
+                # Create AI message with appropriate metadata
                 ai_message = Message(
                     role=MessageRole.ASSISTANT,
                     content=ai_response,
@@ -197,7 +218,8 @@ class ChatService:
                         "teacher_name": teacher.name,
                         "domain": teacher.specialization.primary_domain,
                         "teaching_style": teacher.personality.teaching_style.value,
-                        "rag_enhanced": rag_enhanced
+                        "rag_enhanced": rag_enhanced,
+                        "sources_used": sources_used
                     }
                 )
                 
@@ -567,7 +589,12 @@ class ChatService:
                 "active_chats": 0,
                 "messages_last_24h": 0,
                 "cache_size": len(ChatService._active_sessions_cache),
-                "popular_teachers": {}
+                "popular_teachers": {},
+                "rag_usage": {
+                    "enabled": 0,
+                    "disabled": 0,
+                    "percentage": 0
+                }
             }
             
             chat_pattern = "chat:*"
@@ -612,15 +639,44 @@ class ChatService:
                 sample_keys = message_keys[:sample_size]
                 
                 recent_message_counts = []
+                rag_enabled = 0
+                rag_disabled = 0
                 
                 for key in sample_keys:
                     messages = await redis_client.stream_read(key)
-                    recent_count = sum(1 for msg in messages if msg['data'].get('timestamp', '') > cutoff_str)
+                    recent_count = 0
+                    
+                    for msg in messages:
+                        if msg['data'].get('timestamp', '') > cutoff_str:
+                            recent_count += 1
+                            
+                            # Check RAG usage
+                            metadata = msg['data'].get('metadata', '{}')
+                            if isinstance(metadata, str):
+                                try:
+                                    metadata = json.loads(metadata)
+                                except json.JSONDecodeError:
+                                    metadata = {}
+                            
+                            if metadata.get('rag_enhanced', False):
+                                rag_enabled += 1
+                            else:
+                                rag_disabled += 1
+                    
                     recent_message_counts.append(recent_count)
                 
                 avg_recent_messages = sum(recent_message_counts) / len(recent_message_counts)
                 
                 stats["messages_last_24h"] = int(avg_recent_messages * len(message_keys))
+                
+                # Calculate RAG usage percentage
+                total_rag_messages = rag_enabled + rag_disabled
+                if total_rag_messages > 0:
+                    stats["rag_usage"] = {
+                        "enabled": rag_enabled,
+                        "disabled": rag_disabled,
+                        "percentage": round((rag_enabled / total_rag_messages) * 100, 2)
+                    }
             
             return stats
             

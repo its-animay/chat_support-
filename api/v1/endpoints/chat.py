@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, Query, Path, Body, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Header, Query, Path, Body, BackgroundTasks, Request, WebSocket, WebSocketDisconnect
 from typing import List, Optional, Dict, Any
 from models.chat import ChatSession, Message, ChatStart, ChatMessage, ChatResponse, MessageRole
 from services.chat_service import ChatService
+from services.chat_rag_integration import ChatRAGIntegration
+from core.auth import get_current_user, get_user_from_token
 from core.logger import logger
 from pydantic import BaseModel, Field
+import json 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -16,16 +19,61 @@ class MessageSourcesResponse(BaseModel):
     rag_enhanced: bool
     sources: List[Dict[str, Any]] = []
 
-async def get_current_user(x_user_id: str = Header(...)):
-    return x_user_id
+@router.websocket("/{chat_id}")
+async def websocket_chat(chat_id: str, websocket: WebSocket, token: str = Query(None)):
+    if not token:
+        await websocket.close(code=1008, reason="Missing token")
+        return
+
+    try:
+        # Token validation before accepting connection
+        user_info = await get_user_from_token(token)
+        user_id = user_info.get("id")
+
+        if not user_id:
+            await websocket.close(code=1008, reason="Invalid user info")
+            return
+
+        await websocket.accept()  # Accept only after token is validated
+
+        while True:
+            data = await websocket.receive_text()
+            payload = json.loads(data)
+            message = ChatMessage(**payload)
+
+            response: ChatResponse = await ChatService.send_message(chat_id, user_id, message)
+
+            if response:
+                await websocket.send_json({
+                    "type": "response",
+                    "content": response.content,
+                    "timestamp": str(response.timestamp),
+                    "metadata": response.metadata,
+                    "message_id": response.message_id
+                })
+            else:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Failed to generate AI response"
+                })
+
+    except WebSocketDisconnect:
+        print(f"WebSocket disconnected: {chat_id}")
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        await websocket.close(code=1011)
+
 
 @router.post("/start", response_model=ChatSession)
 async def start_chat(
     chat_data: ChatStart,
-    user_id: str = Depends(get_current_user),
+    request: Request,
     background_tasks: BackgroundTasks = None
 ):
     """Start a new chat session with an AI teacher"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     chat = await ChatService.start_chat(user_id, chat_data)
     if not chat:
         raise HTTPException(
@@ -39,9 +87,13 @@ async def start_chat(
 async def send_message(
     chat_id: str = Path(..., description="The ID of the chat session"),
     message: ChatMessage = Body(..., description="The message to send"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Send a message in a chat session and get AI teacher response with optional RAG enhancement"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
+    # Process with ChatService
     response = await ChatService.send_message(chat_id, user_id, message)
     if not response:
         raise HTTPException(
@@ -53,18 +105,24 @@ async def send_message(
 @router.get("/{chat_id}/history", response_model=List[Message])
 async def get_chat_history(
     chat_id: str = Path(..., description="The ID of the chat session"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Get the full message history for a chat"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     messages = await ChatService.get_chat_history(chat_id, user_id)
     return messages
 
 @router.get("/", response_model=List[ChatSession])
 async def get_user_chats(
     teacher_id: Optional[str] = Query(None, description="Filter by teacher ID"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Get all chat sessions for the current user"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     chats = await ChatService.get_user_chats(user_id, teacher_id)
     return chats
 
@@ -73,9 +131,12 @@ async def rate_message(
     chat_id: str = Path(..., description="The ID of the chat session"),
     message_id: str = Path(..., description="The ID of the message to rate"),
     rating_data: MessageRating = Body(..., description="Rating data"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Rate a teacher's response and provide feedback"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     success = await ChatService.rate_chat_response(chat_id, message_id, user_id, rating_data.rating)
     if not success:
         raise HTTPException(
@@ -87,9 +148,12 @@ async def rate_message(
 @router.post("/{chat_id}/end", response_model=dict)
 async def end_chat(
     chat_id: str = Path(..., description="The ID of the chat session"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """End a chat session"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     success = await ChatService.end_chat(chat_id, user_id)
     if not success:
         raise HTTPException(
@@ -103,9 +167,12 @@ async def end_chat(
 async def get_message_sources(
     chat_id: str = Path(..., description="The ID of the chat session"),
     message_id: str = Path(..., description="The ID of the message"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Get the sources used for a RAG-enhanced message"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     sources = await ChatService.get_message_sources(chat_id, message_id, user_id)
     if not sources:
         raise HTTPException(
@@ -116,19 +183,27 @@ async def get_message_sources(
 
 @router.get("/stats", response_model=Dict[str, Any])
 async def get_chat_statistics(
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Get statistics about chat usage for monitoring"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
+    # In a production system, you might want to check if the user has admin rights
     stats = await ChatService.get_chat_statistics()
     return stats
 
 @router.post("/cleanup", response_model=Dict[str, Any])
 async def cleanup_old_chats(
     days_threshold: int = Query(30, description="Age in days of chats to clean up"),
-    user_id: str = Depends(get_current_user),
+    request: Request = None,
     background_tasks: BackgroundTasks = None
 ):
     """Clean up old, inactive chats (admin operation)"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
+    # In a production system, you might want to check if the user has admin rights
     if background_tasks:
         background_tasks.add_task(ChatService.clean_expired_chats, background_tasks, days_threshold)
         return {"message": f"Cleanup of chats older than {days_threshold} days initiated"}
@@ -145,9 +220,12 @@ async def enable_rag_for_message(
     chat_id: str = Path(..., description="The ID of the chat session"),
     message_id: str = Path(..., description="The ID of the message to regenerate with RAG"),
     rag_data: RagEnableRequest = Body(..., description="RAG enable request"),
-    user_id: str = Depends(get_current_user)
+    request: Request = None
 ):
     """Enable Retrieval-Augmented Generation for a specific message"""
+    # Get user ID from token
+    user_id = await get_current_user(request)
+    
     # Get chat history
     messages = await ChatService.get_chat_history(chat_id, user_id)
     
