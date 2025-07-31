@@ -70,7 +70,7 @@ class LLMService:
             
             # Call OpenAI API
             response = await self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="chatgpt-4o-latest",
                 temperature=temperature,
                 max_tokens=max_tokens,
                 messages=[

@@ -53,7 +53,7 @@ class RagConfig(BaseModel):
     embedding_model: str = Field(default=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"))
     
     # Reranker settings
-    reranker_model: str = Field(default=os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
+    reranker_model: str = Field(default=os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-large"))
     
     # Retrieval settings
     default_top_k: int = Field(default=int(os.getenv("RAG_TOP_K", "10")))

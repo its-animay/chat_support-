@@ -18,7 +18,7 @@ class LangGraphAgentFactory:
         try:
             llm = ChatOpenAI(
                 api_key=settings.openai_api_key,
-                model="gpt-3.5-turbo",
+                model="chatgpt-4o-latest",
                 temperature=0.7
             )
             
