@@ -56,7 +56,20 @@ class ChatService:
                 context = {
                     "user_id": user_id,
                     "chat_id": chat.id,
-                    "session_start": True
+                    "session_start": True,
+                    "teaching_style": teacher.personality.teaching_style.value,
+                    "formality_level": teacher.personality.formality_level,
+                    "response_length": teacher.personality.response_length,
+                    "use_examples": teacher.personality.use_examples,
+                    "use_analogies": teacher.personality.use_analogies,
+                    "primary_traits": [t.value for t in teacher.personality.primary_traits],
+                    "domain": teacher.specialization.primary_domain,
+                    "specializations": teacher.specialization.specializations,
+                    "difficulty_level": {
+                        "min": teacher.specialization.min_difficulty.value,
+                        "max": teacher.specialization.max_difficulty.value
+                    },
+                    "use_rag": False  
                 }
                 system_prompt = teacher.generate_system_prompt(context)
                 
