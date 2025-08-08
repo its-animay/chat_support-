@@ -379,7 +379,9 @@ class EnhancedTeacher(BaseModel):
             style=style_desc,
             teacher_name=self.name,
             title=self.title or "",
-            context=context or {}
+            context=context or {},
+            specialization=self.specialization.primary_domain,
+            specializations=", ".join(self.specialization.specializations) if self.specialization.specializations else ""
         )
         
         return prompt
