@@ -353,34 +353,48 @@ class EnhancedTeacher(BaseModel):
     def generate_system_prompt(self, context: Dict[str, Any] = None) -> str:
         context = context or {}
 
-        personality_desc = f"You have these personality traits: {', '.join([t.value for t in self.personality.primary_traits])}. "
-        personality_desc += f"Your teaching style is {self.personality.teaching_style.value}. "
-        personality_desc += f"You communicate in a {self.personality.formality_level} manner. "
+        personality_desc = (
+            f"You have these personality traits: {', '.join([t.value for t in self.personality.primary_traits])}. "
+            f"Your teaching style is {self.personality.teaching_style.value}. "
+            f"You communicate in a {self.personality.formality_level} manner. "
+        )
         if self.personality.signature_phrases:
             personality_desc += f"You occasionally use these phrases: {', '.join(self.personality.signature_phrases)}. "
 
         domain_desc = f"You are an expert in {self.specialization.primary_domain}"
         if self.specialization.specializations:
             domain_desc += f", specializing in {', '.join(self.specialization.specializations)}"
-        domain_desc += f". You can teach from {self.specialization.min_difficulty.value} to {self.specialization.max_difficulty.value} level. "
-
-        style_desc = f"You {('frequently' if self.personality.use_examples else 'rarely')} use examples. "
-        style_desc += f"You {('often' if self.personality.use_analogies else 'rarely')} use analogies. "
-        style_desc += f"Your responses are typically {self.personality.response_length}. "
-        style_desc += f"You ask questions {self.personality.question_frequency}ly. "
-
-        prompt = self.system_prompt_template.format(
-            personality=personality_desc,
-            domain=domain_desc,
-            style=style_desc,
-            teacher_name=self.name,
-            title=self.title or "",
-            context=context,  # or json.dumps(context) if you want it pretty
-            specialization=self.specialization.primary_domain,
-            specializations=", ".join(self.specialization.specializations) if self.specialization.specializations else "",
-            **context  # <-- lets templates use {teaching_style}, {formality_level}, etc.
+        domain_desc += (
+            f". You can teach from {self.specialization.min_difficulty.value} "
+            f"to {self.specialization.max_difficulty.value} level. "
         )
+
+        style_desc = (
+            f"You {('frequently' if self.personality.use_examples else 'rarely')} use examples. "
+            f"You {('often' if self.personality.use_analogies else 'rarely')} use analogies. "
+            f"Your responses are typically {self.personality.response_length}. "
+            f"You ask questions {self.personality.question_frequency}ly. "
+        )
+
+        # Reserved template fields you control
+        mapping = {
+            "personality": personality_desc,
+            "domain": domain_desc,          # <-- this is the block text for the template
+            "style": style_desc,            # <-- likewise
+            "teacher_name": self.name,
+            "title": self.title or "",
+            "context": context,             # OK to pass the dict directly if template prints it
+            "specialization": self.specialization.primary_domain,
+            "specializations": ", ".join(self.specialization.specializations)
+                if self.specialization.specializations else ""
+        }
+
+        # Drop any context keys that would collide with your reserved names
+        sanitized_context = {k: v for k, v in context.items() if k not in mapping}
+
+        prompt = self.system_prompt_template.format(**mapping, **sanitized_context)
         return prompt
+
 
     
     def get_personality_vector(self) -> Dict[str, float]:
