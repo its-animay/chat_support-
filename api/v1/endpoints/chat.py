@@ -1,6 +1,11 @@
+import asyncio
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, Header, Query, Path, Body, BackgroundTasks, Request, WebSocket, WebSocketDisconnect
 from typing import List, Optional, Dict, Any
+
+from fastapi.websockets import WebSocketState
 from models.chat import ChatSession, Message, ChatStart, ChatMessage, ChatResponse, MessageRole
+from services import redis_client
 from services.chat_service import ChatService
 from services.chat_rag_integration import ChatRAGIntegration
 from core.auth import get_current_user, get_user_from_token
@@ -20,7 +25,16 @@ class MessageSourcesResponse(BaseModel):
     sources: List[Dict[str, Any]] = []
 
 @router.websocket("/{chat_id}")
-async def websocket_chat(chat_id: str, websocket: WebSocket, token: str = Query(None)):
+async def websocket_chat(chat_id: str, websocket: WebSocket, token: str = Query(None), batch_size: int = Query(20)):
+    """
+    WebSocket endpoint for real-time chat with batch history loading and command support.
+    
+    Args:
+        chat_id: The ID of the chat session
+        websocket: WebSocket connection
+        token: Authentication token
+        batch_size: Number of messages to send in each history batch (default: 20)
+    """
     if not token:
         await websocket.close(code=1008, reason="Missing token")
         return
@@ -33,35 +47,195 @@ async def websocket_chat(chat_id: str, websocket: WebSocket, token: str = Query(
         if not user_id:
             await websocket.close(code=1008, reason="Invalid user info")
             return
-
-        await websocket.accept()  # Accept only after token is validated
-
+            
+        # Accept the connection before any potentially slow operations
+        await websocket.accept()
+        
+        # Fetch chat history - this will also validate chat ownership
+        chat_history = await ChatService.get_chat_history(chat_id, user_id)
+        
+        if not chat_history:
+            # Empty history means either chat doesn't exist or user is unauthorized
+            await websocket.send_json({
+                "type": "error",
+                "content": "Chat not found or unauthorized"
+            })
+            await websocket.close(code=1008)
+            return
+        
+        # Filter out system messages
+        client_messages = [
+            {
+                "message_id": msg.id,
+                "role": msg.role.value,
+                "content": msg.content,
+                "timestamp": str(msg.timestamp),
+                "metadata": msg.metadata
+            }
+            for msg in chat_history
+            if msg.role != MessageRole.SYSTEM  # Filter out system messages
+        ]
+        
+        # Send history in batches to avoid overwhelming the socket
+        total_messages = len(client_messages)
+        
+        # First send metadata about the history
+        await websocket.send_json({
+            "type": "history_meta",
+            "total_messages": total_messages,
+            "batch_size": batch_size,
+            "total_batches": (total_messages + batch_size - 1) // batch_size
+        })
+        
+        # Send messages in batches
+        for i in range(0, total_messages, batch_size):
+            batch = client_messages[i:i+batch_size]
+            await websocket.send_json({
+                "type": "history_batch",
+                "batch_index": i // batch_size,
+                "messages": batch
+            })
+            
+            # Small delay between batches to allow client processing
+            if i + batch_size < total_messages:
+                await asyncio.sleep(0.05)
+        
+        # Signal end of history loading
+        await websocket.send_json({
+            "type": "history_complete"
+        })
+        
+        # Regular WebSocket message handling loop
         while True:
-            data = await websocket.receive_text()
-            payload = json.loads(data)
-            message = ChatMessage(**payload)
-
-            response: ChatResponse = await ChatService.send_message(chat_id, user_id, message)
-
-            if response:
+            try:
+                data = await websocket.receive_text()
+                payload = json.loads(data)
+                
+                # Handle command messages
+                if isinstance(payload, dict) and "command" in payload:
+                    command = payload.get("command")
+                    
+                    # Get history command - with pagination support
+                    if command == "get_history":
+                        page = payload.get("page", 0)
+                        page_size = payload.get("page_size", batch_size)
+                        
+                        # Re-fetch history
+                        chat_history = await ChatService.get_chat_history(chat_id, user_id)
+                        client_messages = [
+                            {
+                                "message_id": msg.id,
+                                "role": msg.role.value,
+                                "content": msg.content,
+                                "timestamp": str(msg.timestamp),
+                                "metadata": msg.metadata
+                            }
+                            for msg in chat_history
+                            if msg.role != MessageRole.SYSTEM
+                        ]
+                        
+                        # Calculate start and end indices for pagination
+                        start = page * page_size
+                        end = min(start + page_size, len(client_messages))
+                        
+                        # Send the requested page
+                        if start < len(client_messages):
+                            await websocket.send_json({
+                                "type": "history_page",
+                                "page": page,
+                                "total_pages": (len(client_messages) + page_size - 1) // page_size,
+                                "messages": client_messages[start:end]
+                            })
+                        else:
+                            await websocket.send_json({
+                                "type": "error",
+                                "content": "Page out of range"
+                            })
+                        continue
+                    
+                    # Ping command to keep connection alive
+                    elif command == "ping":
+                        await websocket.send_json({
+                            "type": "pong",
+                            "timestamp": str(datetime.utcnow())
+                        })
+                        continue
+                    
+                    # Other commands can be handled here
+                    else:
+                        await websocket.send_json({
+                            "type": "error",
+                            "content": f"Unknown command: {command}"
+                        })
+                        continue
+                
+                # Handle regular chat messages
+                try:
+                    # Use Pydantic validation
+                    message = ChatMessage(**payload)
+                except Exception as e:
+                    logger.error(f"Invalid message format: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Invalid message format"
+                    })
+                    continue
+                
+                # Send typing indicator to client
                 await websocket.send_json({
-                    "type": "response",
-                    "content": response.content,
-                    "timestamp": str(response.timestamp),
-                    "metadata": response.metadata,
-                    "message_id": response.message_id
+                    "type": "status",
+                    "status": "typing"
                 })
-            else:
+                
+                # Process message with timeout protection
+                try:
+                    # Use asyncio.wait_for to add timeout protection
+                    response = await asyncio.wait_for(
+                        ChatService.send_message(chat_id, user_id, message),
+                        timeout=30.0  # 30 second timeout
+                    )
+                    
+                    if response:
+                        await websocket.send_json({
+                            "type": "response",
+                            "message_id": response.message_id,
+                            "content": response.content,
+                            "timestamp": str(response.timestamp),
+                            "metadata": response.metadata
+                        })
+                    else:
+                        await websocket.send_json({
+                            "type": "error",
+                            "content": "Failed to generate AI response"
+                        })
+                except asyncio.TimeoutError:
+                    logger.warning(f"Response generation timed out for chat {chat_id}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Response generation timed out. Please try again."
+                    })
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON received")
                 await websocket.send_json({
                     "type": "error",
-                    "content": "Failed to generate AI response"
+                    "content": "Invalid JSON format"
+                })
+            except Exception as e:
+                logger.error(f"Error processing message: {str(e)}", exc_info=True)
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Server error processing message"
                 })
 
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected: {chat_id}")
+        logger.info(f"WebSocket disconnected: {chat_id}")
     except Exception as e:
-        print(f"WebSocket error: {e}")
-        await websocket.close(code=1011)
+        logger.error(f"WebSocket error: {str(e)}", exc_info=True)
+        try:
+            if websocket.client_state != WebSocketState.DISCONNECTED:
+                await websocket.close(code=1011)
+        except:
+            pass  # Socket might already be closed
 
 
 @router.post("/start", response_model=ChatSession)
